@@ -18,14 +18,14 @@ jobs:
         with:
           repository: Ankit-mangar/groomguru-service
           path: groomguru-service
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.REPOS_PAT }}
 
       - name: Checkout groomguru-ui
         uses: actions/checkout@v4
         with:
           repository: Ankit-mangar/groomguru-ui
           path: groomguru-ui
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.REPOS_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
