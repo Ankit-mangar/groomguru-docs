@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Upload .docx files to a Google Drive folder using a service account.
+Upload .docx files to a Google Drive folder as native Google Docs.
+
+Converts .docx → Google Docs on upload so they don't count against
+the service account's storage quota (which is zero).
 
 Usage:
   python upload_to_drive.py --folder-id FOLDER_ID --docs-dir ./docs
@@ -18,8 +21,9 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = ['https://www.googleapis.com/auth/drive']
 MIME_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+MIME_GDOC = 'application/vnd.google-apps.document'
 
 
 def get_drive_service():
@@ -34,37 +38,47 @@ def get_drive_service():
 
 
 def find_existing_file(service, folder_id, name):
-    """Find an existing file by name in the folder."""
-    query = f"name='{name}' and '{folder_id}' in parents and trashed=false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
+    """Find an existing Google Doc by name in the folder."""
+    query = (
+        f"name='{name}' and '{folder_id}' in parents "
+        f"and mimeType='{MIME_GDOC}' and trashed=false"
+    )
+    results = service.files().list(
+        q=query, fields="files(id, name)",
+        supportsAllDrives=True, includeItemsFromAllDrives=True,
+    ).execute()
     files = results.get('files', [])
     return files[0]['id'] if files else None
 
 
 def upload_or_update(service, folder_id, local_path):
-    """Upload a new file or update an existing one."""
-    name = os.path.basename(local_path)
+    """Upload a new file or replace an existing one as a Google Doc."""
+    raw_name = os.path.basename(local_path)
+    doc_name = raw_name.replace('.docx', '')
     media = MediaFileUpload(local_path, mimetype=MIME_DOCX, resumable=True)
 
-    existing_id = find_existing_file(service, folder_id, name)
+    existing_id = find_existing_file(service, folder_id, doc_name)
 
     if existing_id:
-        file = service.files().update(
-            fileId=existing_id,
-            media_body=media,
+        # Delete old and re-create (Google Docs can't be updated with media in-place easily)
+        service.files().delete(
+            fileId=existing_id, supportsAllDrives=True,
         ).execute()
-        print(f"  Updated: {name} (id: {file['id']})")
-    else:
-        file_metadata = {
-            'name': name,
-            'parents': [folder_id],
-        }
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id',
-        ).execute()
-        print(f"  Created: {name} (id: {file['id']})")
+        print(f"  Deleted old: {doc_name} (id: {existing_id})")
+
+    file_metadata = {
+        'name': doc_name,
+        'parents': [folder_id],
+        'mimeType': MIME_GDOC,  # Convert to Google Docs on upload
+    }
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id, webViewLink',
+        supportsAllDrives=True,
+    ).execute()
+    link = file.get('webViewLink', '')
+    print(f"  Created: {doc_name} (id: {file['id']}) {link}")
 
     return file['id']
 
@@ -88,7 +102,7 @@ def main():
         print("ERROR: No .docx files found in docs directory")
         sys.exit(1)
 
-    print(f"Found {len(docx_files)} .docx files to upload")
+    print(f"Found {len(docx_files)} .docx files to upload as Google Docs")
     service = get_drive_service()
 
     for filename in docx_files:
