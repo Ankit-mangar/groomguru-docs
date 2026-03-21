@@ -50,10 +50,12 @@ jobs:
           retention-days: 30
 
       - name: Upload to Google Drive
-        if: env.HAS_DRIVE_KEY == 'true'
+        if: env.HAS_TOKEN == 'true'
         env:
-          HAS_DRIVE_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY != '' }}
-          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          HAS_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN != '' }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
         run: |
           python upload_to_drive.py \

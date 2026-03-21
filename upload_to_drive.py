@@ -2,22 +2,24 @@
 """
 Upload .docx files to a Google Drive folder as native Google Docs.
 
-Converts .docx → Google Docs on upload so they don't count against
-the service account's storage quota (which is zero).
+Uses OAuth2 refresh token (your personal Google account) instead of
+a service account, avoiding the zero-quota limitation.
 
 Usage:
   python upload_to_drive.py --folder-id FOLDER_ID --docs-dir ./docs
 
 Environment:
-  GOOGLE_SERVICE_ACCOUNT_KEY  — JSON key contents (not a file path)
+  GOOGLE_CLIENT_ID      — OAuth2 client ID
+  GOOGLE_CLIENT_SECRET  — OAuth2 client secret
+  GOOGLE_REFRESH_TOKEN  — Refresh token from get_refresh_token.py
 """
 
 import argparse
-import json
 import os
 import sys
 
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -27,13 +29,23 @@ MIME_GDOC = 'application/vnd.google-apps.document'
 
 
 def get_drive_service():
-    key_json = os.environ.get('GOOGLE_SERVICE_ACCOUNT_KEY')
-    if not key_json:
-        print("ERROR: GOOGLE_SERVICE_ACCOUNT_KEY environment variable not set")
+    client_id = os.environ.get('GOOGLE_CLIENT_ID')
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+    refresh_token = os.environ.get('GOOGLE_REFRESH_TOKEN')
+
+    if not all([client_id, client_secret, refresh_token]):
+        print("ERROR: Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_REFRESH_TOKEN")
         sys.exit(1)
 
-    info = json.loads(key_json)
-    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri='https://oauth2.googleapis.com/token',
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES,
+    )
+    creds.refresh(Request())
     return build('drive', 'v3', credentials=creds)
 
 
@@ -43,10 +55,7 @@ def find_existing_file(service, folder_id, name):
         f"name='{name}' and '{folder_id}' in parents "
         f"and mimeType='{MIME_GDOC}' and trashed=false"
     )
-    results = service.files().list(
-        q=query, fields="files(id, name)",
-        supportsAllDrives=True, includeItemsFromAllDrives=True,
-    ).execute()
+    results = service.files().list(q=query, fields="files(id, name)").execute()
     files = results.get('files', [])
     return files[0]['id'] if files else None
 
@@ -60,26 +69,21 @@ def upload_or_update(service, folder_id, local_path):
     existing_id = find_existing_file(service, folder_id, doc_name)
 
     if existing_id:
-        # Delete old and re-create (Google Docs can't be updated with media in-place easily)
-        service.files().delete(
-            fileId=existing_id, supportsAllDrives=True,
-        ).execute()
+        service.files().delete(fileId=existing_id).execute()
         print(f"  Deleted old: {doc_name} (id: {existing_id})")
 
     file_metadata = {
         'name': doc_name,
         'parents': [folder_id],
-        'mimeType': MIME_GDOC,  # Convert to Google Docs on upload
+        'mimeType': MIME_GDOC,
     }
     file = service.files().create(
         body=file_metadata,
         media_body=media,
         fields='id, webViewLink',
-        supportsAllDrives=True,
     ).execute()
     link = file.get('webViewLink', '')
     print(f"  Created: {doc_name} (id: {file['id']}) {link}")
-
     return file['id']
 
 
